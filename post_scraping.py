@@ -1,11 +1,17 @@
 import json
 import time
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup
 from datetime import datetime
 import mysql.connector
+
+# Choose one from ["lastActivityTime", "createdAt", "totalViews", "totalVotes"]
+SORT_BY = "lastActivityTime"
+
+# Choose one from ["allTime", "pastDay", "pastWeek", "pastMonth", "threeMonths", "pastYear"]
+DATE_RANGE = "pastYear"
 
 config_path='db_config_leadsniper.json'
 with open(config_path, 'r') as f:
@@ -47,13 +53,12 @@ def parse_count(s):
         return int(s)
 
 def generate_all_page_urls(base_url):
-    sort_options = {
-        "Latest activity": "lastActivityTime",
-        "Recently created": "createdAt", 
-        "Most viewed": "totalViews",
-        "Most voted": "totalVotes"
-    }
-
+    sort_options = ["lastActivityTime", "createdAt", "totalViews", "totalVotes"]
+    date_range_options = ["allTime", "pastDay", "pastWeek", "pastMonth", "threeMonths", "pastYear"]
+    if SORT_BY not in sort_options: 
+        print("Please update the SORT_BY parameter correctly. Choose one from the following list: ", sort_options)
+    if DATE_RANGE not in date_range_options: 
+        print("Please update the DATE_RANGE parameter correctly. Choose one from the following list: ", date_range_options)
     categories = {
         "Account Health": "amzn1.spce.category.8b1ad9d6",
         "Account Setup": "amzn1.spce.category.8b1ad26a",
@@ -68,16 +73,30 @@ def generate_all_page_urls(base_url):
         "Product Safety and Compliance": "amzn1.spce.category.8b1ad9e4"
     }
     url_dict = {}
-    for sort_text, sort_value in sort_options.items():
-        url_dict[sort_text] = {}
-        for category_name, category_id in categories.items():
-            url = f"{base_url}?sortBy={sort_value}&dateRange=threeMonths&replies=repliesAll&contentType=ALL&categories[]={category_id}"
-            url_dict[sort_text][category_name] = url
+    url_dict[SORT_BY] = {}
+    for category_name, category_id in categories.items():
+        url = f"{base_url}?sortBy={SORT_BY}&dateRange={DATE_RANGE}&replies=repliesAll&contentType=ALL&categories[]={category_id}"
+        url_dict[SORT_BY][category_name] = url
     return url_dict
 
 def load_page_with_selenium(url, driver, wait_time=5):
     driver.get(url)
     time.sleep(wait_time)
+    previous_content_length = 0
+    no_change_count = 0
+    while True:
+        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
+        time.sleep(2)
+        
+        current_content_length = len(driver.page_source)
+        
+        if current_content_length == previous_content_length:
+            no_change_count += 1
+            if no_change_count >= 3:
+                break
+        else:
+            no_change_count = 0
+        previous_content_length = current_content_length
     page_source = driver.page_source
     return page_source
 
@@ -139,7 +158,9 @@ def upload_scraped_data(conn, table, data):
 
 def main(url, category, sorted_by, driver, conn):
     print(url)
+    print("Loading page and scrolling till the bottom... This might take a while... It loads almost 2K records.")
     page_source = load_page_with_selenium(url, driver)
+    print("Done with the page load.")
     scraped_data = scrape_data(page_source)
     for i in scraped_data:
         i['category'] = category
