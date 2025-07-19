@@ -7,16 +7,19 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import mysql.connector
 
-# Choose one from ["lastActivityTime", "createdAt", "totalViews", "totalVotes"]
-SORT_BY = "lastActivityTime"
+# Choose from ["lastActivityTime", "createdAt", "totalViews", "totalVotes"]
+SORT_BY = ["lastActivityTime"]
 
 # Choose one from ["allTime", "pastDay", "pastWeek", "pastMonth", "threeMonths", "pastYear"]
 DATE_RANGE = "pastYear"
 
+# CHOOSE from ['Account Health', 'Account Setup', 'Community Connections', 'Create and Manage Listings', 'Fulfill Orders', 'Grow Your Business', 'Manage Buyer Experience', 'Manage Inventory', 'Manage Your Brand', 'News and Announcements', 'Product Safety and Compliance']
+CATEGORIES = ['Account Health', 'Account Setup', 'Community Connections', 'Create and Manage Listings', 'Fulfill Orders', 'Grow Your Business', 'Manage Buyer Experience', 'Manage Inventory', 'Manage Your Brand', 'News and Announcements', 'Product Safety and Compliance']
+
 # this is the waiting time before the page scrolls. So before every scroll. 
 # So total time taken for loading a page is amount of scrolls * WAIT_TIME
 # To make the load faster, you can reduce this time, but make sure it loads the page in that less time. 
-WAIT_TIME = 2
+WAIT_TIME = 3
 
 config_path='db_config_leadsniper.json'
 with open(config_path, 'r') as f:
@@ -60,10 +63,6 @@ def parse_count(s):
 def generate_all_page_urls(base_url):
     sort_options = ["lastActivityTime", "createdAt", "totalViews", "totalVotes"]
     date_range_options = ["allTime", "pastDay", "pastWeek", "pastMonth", "threeMonths", "pastYear"]
-    if SORT_BY not in sort_options: 
-        print("Please update the SORT_BY parameter correctly. Choose one from the following list: ", sort_options)
-    if DATE_RANGE not in date_range_options: 
-        print("Please update the DATE_RANGE parameter correctly. Choose one from the following list: ", date_range_options)
     categories = {
         "Account Health": "amzn1.spce.category.8b1ad9d6",
         "Account Setup": "amzn1.spce.category.8b1ad26a",
@@ -77,11 +76,22 @@ def generate_all_page_urls(base_url):
         "News and Announcements": "amzn1.spce.category.8b1ad9d2",
         "Product Safety and Compliance": "amzn1.spce.category.8b1ad9e4"
     }
+    if not set(SORT_BY) < set(sort_options):
+        print("Please update the SORT_BY parameter correctly. Choose from the following list: ", sort_options)
+    if DATE_RANGE not in date_range_options: 
+        print("Please update the DATE_RANGE parameter correctly. Choose one from the following list: ", date_range_options)
+    if not set(CATEGORIES) < categories.keys(): 
+        print("Please update the CATEGORIES parameter correctly. Choose from the following list: ", ", ".join(categories.keys()))
     url_dict = {}
-    url_dict[SORT_BY] = {}
-    for category_name, category_id in categories.items():
-        url = f"{base_url}?sortBy={SORT_BY}&dateRange={DATE_RANGE}&replies=repliesAll&contentType=ALL&categories[]={category_id}"
-        url_dict[SORT_BY][category_name] = url
+    for sort_value in SORT_BY:
+        url_dict[sort_value] = {}
+        for category_name in CATEGORIES:
+            category_id = categories.get(category_name)
+            if not category_id:
+                print(f"Warning: '{category_name}' is not a valid category name.")
+                continue
+            url = f"{base_url}?sortBy={sort_value}&dateRange={DATE_RANGE}&replies=repliesAll&contentType=ALL&categories[]={category_id}"
+            url_dict[sort_value][category_name] = url
     return url_dict
 
 def load_page_with_selenium(url, driver, wait_time=5):
