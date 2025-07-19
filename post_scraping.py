@@ -76,12 +76,15 @@ def generate_all_page_urls(base_url):
         "News and Announcements": "amzn1.spce.category.8b1ad9d2",
         "Product Safety and Compliance": "amzn1.spce.category.8b1ad9e4"
     }
-    if not set(SORT_BY) < set(sort_options):
-        print("Please update the SORT_BY parameter correctly. Choose from the following list: ", sort_options)
+    if not set(SORT_BY) <= set(sort_options):
+        print("Error: Please update the SORT_BY parameter correctly. Choose from the following list: ", sort_options)
+        return {}
     if DATE_RANGE not in date_range_options: 
-        print("Please update the DATE_RANGE parameter correctly. Choose one from the following list: ", date_range_options)
-    if not set(CATEGORIES) < categories.keys(): 
-        print("Please update the CATEGORIES parameter correctly. Choose from the following list: ", ", ".join(categories.keys()))
+        print("Error: Please update the DATE_RANGE parameter correctly. Choose one from the following list: ", date_range_options)
+        return {}
+    if not set(CATEGORIES) <= categories.keys(): 
+        print("Error: Please update the CATEGORIES parameter correctly. Choose from the following list: ", ", ".join(categories.keys()))
+        return {}
     url_dict = {}
     for sort_value in SORT_BY:
         url_dict[sort_value] = {}
