@@ -13,6 +13,11 @@ SORT_BY = "lastActivityTime"
 # Choose one from ["allTime", "pastDay", "pastWeek", "pastMonth", "threeMonths", "pastYear"]
 DATE_RANGE = "pastYear"
 
+# this is the waiting time before the page scrolls. So before every scroll. 
+# So total time taken for loading a page is amount of scrolls * WAIT_TIME
+# To make the load faster, you can reduce this time, but make sure it loads the page in that less time. 
+WAIT_TIME = 2
+
 config_path='db_config_leadsniper.json'
 with open(config_path, 'r') as f:
     config = json.load(f)
@@ -86,7 +91,7 @@ def load_page_with_selenium(url, driver, wait_time=5):
     no_change_count = 0
     while True:
         driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
-        time.sleep(2)
+        time.sleep(WAIT_TIME)
         
         current_content_length = len(driver.page_source)
         
@@ -158,7 +163,7 @@ def upload_scraped_data(conn, table, data):
 
 def main(url, category, sorted_by, driver, conn):
     print(url)
-    print("Loading page and scrolling till the bottom... This might take a while... It loads almost 2K records.")
+    print("Loading page and scrolling till the bottom... This might take a while... It loads almost 1K-1.5K records.")
     page_source = load_page_with_selenium(url, driver)
     print("Done with the page load.")
     scraped_data = scrape_data(page_source)
