@@ -153,7 +153,7 @@ if __name__ == "__main__":
     urls = generate_all_page_urls(base_url)
     driver = setup_headless_driver()
     conn = connect_to_sql()
-    for sorted_by, categories in urls.items():
+    for sorted_by, categories in urls.items(): 
         for category, url in categories.items():
             main(url, category, sorted_by, driver, conn)
             break
