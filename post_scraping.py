@@ -6,6 +6,7 @@ from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup
 from datetime import datetime
 import mysql.connector
+import traceback
 
 # Choose from ["lastActivityTime", "createdAt", "totalViews", "totalVotes"]
 SORT_BY = ["lastActivityTime"]
@@ -16,10 +17,11 @@ DATE_RANGE = "pastYear"
 # CHOOSE from ['Account Health', 'Account Setup', 'Community Connections', 'Create and Manage Listings', 'Fulfill Orders', 'Grow Your Business', 'Manage Buyer Experience', 'Manage Inventory', 'Manage Your Brand', 'News and Announcements', 'Product Safety and Compliance']
 CATEGORIES = ['Account Health', 'Account Setup', 'Community Connections', 'Create and Manage Listings', 'Fulfill Orders', 'Grow Your Business', 'Manage Buyer Experience', 'Manage Inventory', 'Manage Your Brand', 'News and Announcements', 'Product Safety and Compliance']
 
-# this is the waiting time before the page scrolls. So before every scroll. 
-# So total time taken for loading a page is amount of scrolls * WAIT_TIME
-# To make the load faster, you can reduce this time, but make sure it loads the page in that less time. 
+# Scroll-related configurations
 WAIT_TIME = 3
+SCROLL_BATCH_SIZE = 4  # Number of scrolls before processing data
+CONNECTION_REFRESH_INTERVAL = 30  # Minutes between connection refreshes
+MAX_RETRIES = 3  # Maximum number of retry attempts
 
 config_path='db_config_leadsniper.json'
 with open(config_path, 'r') as f:
@@ -97,26 +99,120 @@ def generate_all_page_urls(base_url):
             url_dict[sort_value][category_name] = url
     return url_dict
 
-def load_page_with_selenium(url, driver, wait_time=5):
-    driver.get(url)
-    time.sleep(wait_time)
-    previous_content_length = 0
-    no_change_count = 0
-    while True:
-        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
-        time.sleep(WAIT_TIME)
+def load_page_with_selenium(url, driver, wait_time=5, category=None, sorted_by=None):
+    try:
+        driver.get(url)
+        time.sleep(wait_time)
+        previous_content_length = 0
+        no_change_count = 0
+        scroll_count = 0
+        last_refresh_time = time.time()
+        all_data = []
         
-        current_content_length = len(driver.page_source)
+        while True:
+            try:
+                # Check if we need to refresh connection
+                current_time = time.time()
+                if (current_time - last_refresh_time) / 60 >= CONNECTION_REFRESH_INTERVAL:
+                    print(f"Refreshing connection after {CONNECTION_REFRESH_INTERVAL} minutes...")
+                    cookies = driver.get_cookies()
+                    current_url = driver.current_url
+                    driver.quit()
+                    driver = setup_headless_driver()
+                    driver.get(current_url)
+                    for cookie in cookies:
+                        try:
+                            driver.add_cookie(cookie)
+                        except:
+                            pass
+                    driver.refresh()
+                    time.sleep(wait_time)
+                    last_refresh_time = time.time()
+                
+                # Scroll down
+                driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
+                time.sleep(WAIT_TIME)
+                scroll_count += 1
+                
+                current_content_length = len(driver.page_source)
+                
+                if current_content_length == previous_content_length:
+                    no_change_count += 1
+                    if no_change_count >= 3:
+                        # Final scrape before exiting
+                        page_source = driver.page_source
+                        new_data = scrape_data(page_source)
+                        if category and sorted_by:
+                            for item in new_data:
+                                item['category'] = category
+                                item['sorted_by'] = sorted_by
+                        
+                        # Add unique items only
+                        thread_ids = {item['thread_id'] for item in all_data}
+                        new_data = [item for item in new_data if item['thread_id'] not in thread_ids]
+                        all_data.extend(new_data)
+                        
+                        # Upload the final batch
+                        if new_data and category and sorted_by:
+                            upload_scraped_data('stg_amz_seller_forums_post', new_data)
+                            print(f"Uploaded final batch of {len(new_data)} posts.")
+                        break
+                else:
+                    no_change_count = 0
+                
+                previous_content_length = current_content_length
+                
+                # Process data in batches
+                if scroll_count % SCROLL_BATCH_SIZE == 0:
+                    print(f"Processing batch after {scroll_count} scrolls...")
+                    page_source = driver.page_source
+                    new_data = scrape_data(page_source)
+                    
+                    if category and sorted_by:
+                        for item in new_data:
+                            item['category'] = category
+                            item['sorted_by'] = sorted_by
+                    
+                    # Add unique items only
+                    thread_ids = {item['thread_id'] for item in all_data}
+                    new_data = [item for item in new_data if item['thread_id'] not in thread_ids]
+                    all_data.extend(new_data)
+                    
+                    # Upload the batch
+                    if new_data and category and sorted_by:
+                        upload_scraped_data('stg_amz_seller_forums_post', new_data)
+                        print(f"Uploaded batch of {len(new_data)} posts.")
+            
+            except Exception as e:
+                print(f"Error during scrolling: {str(e)}")
+                print(traceback.format_exc())
+                # Save what we have so far
+                if all_data and category and sorted_by:
+                    upload_scraped_data('stg_amz_seller_forums_post', all_data)
+                    print(f"Error occurred, but saved {len(all_data)} posts.")
+                
+                # Try to recover
+                for attempt in range(MAX_RETRIES):
+                    try:
+                        print(f"Attempting to recover (attempt {attempt+1}/{MAX_RETRIES})...")
+                        current_url = driver.current_url
+                        driver.quit()
+                        driver = setup_headless_driver()
+                        driver.get(current_url)
+                        time.sleep(wait_time * 2)  # Extra wait time for recovery
+                        break
+                    except Exception as recovery_error:
+                        print(f"Recovery attempt {attempt+1} failed: {str(recovery_error)}")
+                        if attempt == MAX_RETRIES - 1:
+                            print("All recovery attempts failed.")
+                            return all_data
         
-        if current_content_length == previous_content_length:
-            no_change_count += 1
-            if no_change_count >= 3:
-                break
-        else:
-            no_change_count = 0
-        previous_content_length = current_content_length
-    page_source = driver.page_source
-    return page_source
+        return all_data
+    
+    except Exception as e:
+        print(f"Fatal error: {str(e)}")
+        print(traceback.format_exc())
+        return all_data
 
 def scrape_data(html_source):
     soup = BeautifulSoup(html_source, 'html.parser')
@@ -157,7 +253,8 @@ def scrape_data(html_source):
         post_to_upload.append(post_details)
     return post_to_upload
 
-def upload_scraped_data(conn, table, data):
+def upload_scraped_data(table, data):
+    conn = connect_to_sql()
     cursor = conn.cursor()
     if not data:
         return
@@ -173,29 +270,43 @@ def upload_scraped_data(conn, table, data):
     cursor.executemany(sql, values)
     conn.commit()
     cursor.close()
+    conn.close()
 
-def main(url, category, sorted_by, driver, conn):
+def main(url, category, sorted_by, driver):
     print(url)
-    print("Loading page and scrolling till the bottom... This might take a while... It loads almost 1K-1.5K records.")
-    page_source = load_page_with_selenium(url, driver)
-    print("Done with the page load.")
-    scraped_data = scrape_data(page_source)
-    for i in scraped_data:
-        i['category'] = category
-        i['sorted_by'] = sorted_by
-    upload_scraped_data(conn, 'stg_amz_seller_forums_post', scraped_data)
-    print("Done scraping! :)")
+    print("Loading page and scrolling till the bottom... Processing in batches...")
+    scraped_data = load_page_with_selenium(url, driver, WAIT_TIME, category, sorted_by)
+    print(f"Done scraping! Found {len(scraped_data)} posts :)")
 
 # Example usage
 if __name__ == "__main__":
     base_url = "https://sellercentral.amazon.com/seller-forums/discussions"
     urls = generate_all_page_urls(base_url)
     driver = setup_headless_driver()
-    conn = connect_to_sql()
-    for sorted_by, categories in urls.items(): 
-        for category, url in categories.items():
-            main(url, category, sorted_by, driver, conn)
-            break
-        break
-    driver.quit()
-    conn.close()
+    try:
+        for sorted_by, categories in urls.items(): 
+            for category, url in categories.items():
+                retry_count = 0
+                while retry_count < MAX_RETRIES:
+                    try:
+                        main(url, category, sorted_by, driver)
+                        break
+                    except Exception as e:
+                        retry_count += 1
+                        print(f"Error processing {category}, {sorted_by}: {str(e)}")
+                        print(f"Retry {retry_count}/{MAX_RETRIES}")
+                        if retry_count < MAX_RETRIES:
+                            print("Restarting driver...")
+                            try:
+                                driver.quit()
+                            except:
+                                pass
+                            driver = setup_headless_driver()
+                            time.sleep(5)
+                        else:
+                            print(f"Max retries reached for {category}, {sorted_by}. Moving to next.")
+    finally:
+        try:
+            driver.quit()
+        except:
+            pass

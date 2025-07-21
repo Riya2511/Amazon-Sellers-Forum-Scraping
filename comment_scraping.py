@@ -6,6 +6,14 @@ from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup
 from datetime import datetime
 import mysql.connector
+import sys
+
+# CONFIGURATION PARAMETERS
+BATCH_SIZE = 100                # Number of threads to fetch at once
+STORE_FREQUENCY = 15            # Store to database after processing this many threads
+MAX_RETRIES = 3                 # Maximum number of retries for driver setup
+RETRY_DELAY = 5                 # Seconds to wait between retries
+PAGE_LOAD_WAIT_TIME = 5         # Seconds to wait for page to load
 
 config_path='db_config_leadsniper.json'
 with open(config_path, 'r') as f:
@@ -46,29 +54,35 @@ def parse_count(s):
     else:
         return int(s)
 
-def fetch_all_unprocessed_threads(conn, base_url):
+def fetch_all_unprocessed_threads(base_url, batch_size=BATCH_SIZE):
+    conn = connect_to_sql()
     cursor = conn.cursor()
     sql = """
         SELECT DISTINCT p.thread_id 
         FROM stg_amz_seller_forums_post p
         LEFT JOIN stg_amz_seller_forums_comments c ON p.thread_id = c.thread_id
         WHERE c.thread_id IS NULL AND p.thread_id IS NOT NULL
+        LIMIT %s
     """
     try:
-        cursor.execute(sql)
+        cursor.execute(sql, (batch_size,))
         results = cursor.fetchall()
         urls = []
         for row in results:
             thread_id = row[0]
             urls.append(f"{base_url}{thread_id}")
         cursor.close()
+        conn.close()
         return urls
     except Exception as e:
         print(f"Error fetching unprocessed threads: {e}")
-        cursor.close()
+        if cursor:
+            cursor.close()
+        if conn and conn.is_connected():
+            conn.close()
         return []
 
-def load_page_with_selenium(url, driver, wait_time=5):
+def load_page_with_selenium(url, driver, wait_time=PAGE_LOAD_WAIT_TIME):
    driver.get(url)
    time.sleep(wait_time)
    
@@ -120,10 +134,13 @@ def scrape_data(html_source, thread_id):
         count += 1
     return comments_to_upload
 
-def upload_scraped_data(conn, table, data):
-    cursor = conn.cursor()
+def upload_scraped_data(table, data):
     if not data:
         return
+    
+    conn = connect_to_sql()
+    cursor = conn.cursor()
+    
     columns = ', '.join(data[0].keys())
     placeholders = ', '.join(['%s'] * len(data[0]))
     update_clause = ', '.join([f"{col}=VALUES({col})" for col in data[0].keys() if col != 'thread_id' or col != 'comment_id'])
@@ -137,21 +154,63 @@ def upload_scraped_data(conn, table, data):
     cursor.executemany(sql, values)
     conn.commit()
     cursor.close()
+    conn.close()
 
-def main(url, driver, conn):
-    print(url)
-    page_source = load_page_with_selenium(url, driver)
-    scraped_data = scrape_data(page_source, url.split('/')[-1])
-    upload_scraped_data(conn, 'stg_amz_seller_forums_comments', scraped_data)
-    print("Done scraping! :)")
+def process_url_with_retry(url, driver):
+    for attempt in range(MAX_RETRIES):
+        try:
+            page_source = load_page_with_selenium(url, driver)
+            return scrape_data(page_source, url.split('/')[-1])
+        except Exception as e:
+            print(f"Error processing {url}, attempt {attempt+1}/{MAX_RETRIES}: {e}")
+            if attempt < MAX_RETRIES - 1:
+                try:
+                    driver.quit()
+                except:
+                    pass
+                time.sleep(RETRY_DELAY)
+                driver = setup_headless_driver()
+            else:
+                print(f"Failed to process {url} after {MAX_RETRIES} attempts")
+                return []
+    return []
 
-if __name__ == "__main__":
+def main():
     base_url = "https://sellercentral.amazon.com/seller-forums/discussions/t/"
     driver = setup_headless_driver()
-    conn = connect_to_sql()
-    urls = fetch_all_unprocessed_threads(conn, base_url)
-    for url in urls: 
-        main(url, driver, conn)
-        break
-    driver.quit()
-    conn.close()
+    
+    try:
+        while True:  # Continue until no more unprocessed threads
+            urls = fetch_all_unprocessed_threads(base_url)
+            
+            # Exit loop if no more unprocessed threads
+            if not urls:
+                print("No more unprocessed threads found. Exiting.")
+                break
+                
+            all_comments = []
+            
+            for i, url in enumerate(urls):
+                print(f"Processing {i+1}/{len(urls)}: {url}")
+                
+                comments = process_url_with_retry(url, driver)
+                all_comments.extend(comments)
+                
+                if (i + 1) % STORE_FREQUENCY == 0 and all_comments:
+                    print(f"Storing batch of {len(all_comments)} comments")
+                    upload_scraped_data('stg_amz_seller_forums_comments', all_comments)
+                    all_comments = []
+            
+            if all_comments:
+                print(f"Storing final batch of {len(all_comments)} comments")
+                upload_scraped_data('stg_amz_seller_forums_comments', all_comments)
+            
+            print(f"Completed processing batch of {len(urls)} threads. Fetching next batch...")
+            
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+    main()
