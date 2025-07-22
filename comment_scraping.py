@@ -18,7 +18,7 @@ with open(config_path, 'r') as f:
 
 def setup_headless_driver():
     options = webdriver.ChromeOptions()
-    # options.add_argument('--headless=new')
+    options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
@@ -195,7 +195,7 @@ def main(url, driver, conn):
     print("Done scraping! :)")
     return scraped_data
 
-def main():
+if __name__ == "__main__":
     base_url = "https://sellercentral.amazon.com/seller-forums/discussions/t/"
     driver = setup_headless_driver()
     conn = connect_to_sql()
@@ -219,3 +219,4 @@ def main():
         driver.quit()
     if conn:
         conn.close()
+
