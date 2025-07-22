@@ -6,6 +6,7 @@ from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup
 from datetime import datetime
 import mysql.connector
+import traceback
 
 # Choose from ["lastActivityTime", "createdAt", "totalViews", "totalVotes"]
 SORT_BY = ["lastActivityTime", "createdAt", "totalViews", "totalVotes"]
@@ -19,9 +20,7 @@ CATEGORIES = ['Account Health', 'Account Setup', 'Community Connections', 'Creat
 # this is the waiting time before the page scrolls. So before every scroll. 
 # So total time taken for loading a page is amount of scrolls * WAIT_TIME
 # To make the load faster, you can reduce this time, but make sure it loads the page in that less time. 
-WAIT_TIME = 1
-
-NUMBER_OF_SCROLLS = 10
+WAIT_TIME = 3
 
 config_path='db_config_leadsniper.json'
 with open(config_path, 'r') as f:
@@ -100,53 +99,25 @@ def generate_all_page_urls(base_url):
     return url_dict
 
 def load_page_with_selenium(url, driver, wait_time=5):
-    if not driver:
-        driver = setup_headless_driver()
     driver.get(url)
     time.sleep(wait_time)
     previous_content_length = 0
     no_change_count = 0
-    scroll_count = 0
     while True:
         driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
         time.sleep(WAIT_TIME)
-        scroll_count += 1
-        if scroll_count%NUMBER_OF_SCROLLS == 0:
-            page_source = driver.page_source
-            print(f"Done with the {scroll_count} load.")
-            scraped_data = scrape_data(page_source)
-            if scraped_data:
-                for i in scraped_data:
-                    i['category'] = category
-                    i['sorted_by'] = sorted_by
-                print("Uploading scraped data to the database...")
-                upload_scraped_data(conn, 'stg_amz_seller_forums_post', scraped_data)
-                print("Upload complete.")
-            else:
-                print("No data scraped in this batch, continuing to scroll...")
-                time.sleep(wait_time)
+        
         current_content_length = len(driver.page_source)
         
         if current_content_length == previous_content_length:
             no_change_count += 1
             if no_change_count >= 3:
-                page_source = driver.page_source
-                print(f"Done with the {scroll_count} load.")
-                scraped_data = scrape_data(page_source)
-                if scraped_data:
-                    for i in scraped_data:
-                        i['category'] = category
-                        i['sorted_by'] = sorted_by
-                    print("Uploading scraped data to the database...")
-                    upload_scraped_data(conn, 'stg_amz_seller_forums_post', scraped_data)
-                    print("Upload complete.")
-                else:
-                    print("No data scraped in this batch, continuing to scroll...")
-                    time.sleep(wait_time)
                 break
         else:
             no_change_count = 0
         previous_content_length = current_content_length
+    page_source = driver.page_source
+    return page_source
 
 def scrape_data(html_source):
     try:
@@ -192,16 +163,6 @@ def scrape_data(html_source):
         return None
 
 def upload_scraped_data(conn, table, data):
-    if conn and not conn.is_connected():
-        try:
-            conn.reconnect(attempts=3, delay=2)
-            if not conn.is_connected():
-                conn = connect_to_sql()
-        except Exception as e:
-            print(f"Error connecting to database. Saved data to file...: {e}")
-            with open('scraped_data.json', 'a') as f:
-                json.dump(data, f, indent=4)
-            return
     cursor = conn.cursor()
     if not data:
         return
@@ -217,11 +178,18 @@ def upload_scraped_data(conn, table, data):
     cursor.executemany(sql, values)
     conn.commit()
     cursor.close()
+    conn.close()
 
-def main(url, category, sorted_by, driver, conn):
+def main(url, category, sorted_by, driver):
     print(url)
-    print("Loading page and scrolling till the bottom... This might take a while...")
-    load_page_with_selenium(url, driver)
+    print("Loading page and scrolling till the bottom... This might take a while... It loads almost 1K-1.5K records.")
+    page_source = load_page_with_selenium(url, driver)
+    print("Done with the page load.")
+    scraped_data = scrape_data(page_source)
+    for i in scraped_data:
+        i['category'] = category
+        i['sorted_by'] = sorted_by
+    upload_scraped_data(conn, 'stg_amz_seller_forums_post', scraped_data)
     print("Done scraping! :)")
 
 # Example usage
@@ -232,9 +200,8 @@ if __name__ == "__main__":
     conn = connect_to_sql()
     for sorted_by, categories in urls.items(): 
         for category, url in categories.items():
-            print(f"Processing category: {category} with sorting: {sorted_by}")
             main(url, category, sorted_by, driver, conn)
-    if driver:
-        driver.quit()
-    if conn:
-        conn.close()
+            break
+        break
+    driver.quit()
+    conn.close()

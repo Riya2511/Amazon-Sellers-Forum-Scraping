@@ -76,10 +76,14 @@ def fetch_all_unprocessed_threads(conn, base_url):
             thread_id = row[0]
             urls.append(f"{base_url}{thread_id}")
         cursor.close()
+        conn.close()
         return urls
     except Exception as e:
         print(f"Error fetching unprocessed threads: {e}")
-        cursor.close()
+        if cursor:
+            cursor.close()
+        if conn and conn.is_connected():
+            conn.close()
         return []
 
 def load_page_with_selenium(url, driver, wait_time=5):
@@ -165,6 +169,10 @@ def upload_scraped_data(conn, table, data):
     cursor = conn.cursor()
     if not data:
         return
+    
+    conn = connect_to_sql()
+    cursor = conn.cursor()
+    
     columns = ', '.join(data[0].keys())
     placeholders = ', '.join(['%s'] * len(data[0]))
     update_clause = ', '.join([f"{col}=VALUES({col})" for col in data[0].keys() if col != 'thread_id' or col != 'comment_id'])
@@ -178,6 +186,7 @@ def upload_scraped_data(conn, table, data):
     cursor.executemany(sql, values)
     conn.commit()
     cursor.close()
+    conn.close()
 
 def main(url, driver, conn):
     print(url)
@@ -186,7 +195,7 @@ def main(url, driver, conn):
     print("Done scraping! :)")
     return scraped_data
 
-if __name__ == "__main__":
+def main():
     base_url = "https://sellercentral.amazon.com/seller-forums/discussions/t/"
     driver = setup_headless_driver()
     conn = connect_to_sql()
