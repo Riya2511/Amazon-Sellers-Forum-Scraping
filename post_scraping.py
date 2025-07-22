@@ -8,10 +8,10 @@ from datetime import datetime
 import mysql.connector
 
 # Choose from ["lastActivityTime", "createdAt", "totalViews", "totalVotes"]
-SORT_BY = ["lastActivityTime"]
+SORT_BY = ["lastActivityTime", "createdAt", "totalViews", "totalVotes"]
 
 # Choose one from ["allTime", "pastDay", "pastWeek", "pastMonth", "threeMonths", "pastYear"]
-DATE_RANGE = "pastYear"
+DATE_RANGE = "pastMonth"
 
 # CHOOSE from ['Account Health', 'Account Setup', 'Community Connections', 'Create and Manage Listings', 'Fulfill Orders', 'Grow Your Business', 'Manage Buyer Experience', 'Manage Inventory', 'Manage Your Brand', 'News and Announcements', 'Product Safety and Compliance']
 CATEGORIES = ['Account Health', 'Account Setup', 'Community Connections', 'Create and Manage Listings', 'Fulfill Orders', 'Grow Your Business', 'Manage Buyer Experience', 'Manage Inventory', 'Manage Your Brand', 'News and Announcements', 'Product Safety and Compliance']
@@ -19,7 +19,9 @@ CATEGORIES = ['Account Health', 'Account Setup', 'Community Connections', 'Creat
 # this is the waiting time before the page scrolls. So before every scroll. 
 # So total time taken for loading a page is amount of scrolls * WAIT_TIME
 # To make the load faster, you can reduce this time, but make sure it loads the page in that less time. 
-WAIT_TIME = 3
+WAIT_TIME = 1
+
+NUMBER_OF_SCROLLS = 10
 
 config_path='db_config_leadsniper.json'
 with open(config_path, 'r') as f:
@@ -27,7 +29,7 @@ with open(config_path, 'r') as f:
 
 def setup_headless_driver():
     options = webdriver.ChromeOptions()
-    options.add_argument('--headless=new')
+    # options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
@@ -98,66 +100,108 @@ def generate_all_page_urls(base_url):
     return url_dict
 
 def load_page_with_selenium(url, driver, wait_time=5):
+    if not driver:
+        driver = setup_headless_driver()
     driver.get(url)
     time.sleep(wait_time)
     previous_content_length = 0
     no_change_count = 0
+    scroll_count = 0
     while True:
         driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
         time.sleep(WAIT_TIME)
-        
+        scroll_count += 1
+        if scroll_count%NUMBER_OF_SCROLLS == 0:
+            page_source = driver.page_source
+            print(f"Done with the {scroll_count} load.")
+            scraped_data = scrape_data(page_source)
+            if scraped_data:
+                for i in scraped_data:
+                    i['category'] = category
+                    i['sorted_by'] = sorted_by
+                print("Uploading scraped data to the database...")
+                upload_scraped_data(conn, 'stg_amz_seller_forums_post', scraped_data)
+                print("Upload complete.")
+            else:
+                print("No data scraped in this batch, continuing to scroll...")
+                time.sleep(wait_time)
         current_content_length = len(driver.page_source)
         
         if current_content_length == previous_content_length:
             no_change_count += 1
             if no_change_count >= 3:
+                page_source = driver.page_source
+                print(f"Done with the {scroll_count} load.")
+                scraped_data = scrape_data(page_source)
+                if scraped_data:
+                    for i in scraped_data:
+                        i['category'] = category
+                        i['sorted_by'] = sorted_by
+                    print("Uploading scraped data to the database...")
+                    upload_scraped_data(conn, 'stg_amz_seller_forums_post', scraped_data)
+                    print("Upload complete.")
+                else:
+                    print("No data scraped in this batch, continuing to scroll...")
+                    time.sleep(wait_time)
                 break
         else:
             no_change_count = 0
         previous_content_length = current_content_length
-    page_source = driver.page_source
-    return page_source
 
 def scrape_data(html_source):
-    soup = BeautifulSoup(html_source, 'html.parser')
-    all_posts = soup.find("div", {"data-testid": "searchListing-container"}).find_all("div", {"data-testid": "search-post-layout"})
-    post_to_upload = []
-    for post in all_posts:
-        post_details = {}
-        header = post.find("div", {"data-testid": "header"})
-        thread_link = header.find("a")
-        post_details['thread_id'] = (thread_link['href']).split('/')[-1] if thread_link and thread_link.has_attr('href') else None
-        post_details['thread_title'] = thread_link.text.strip() if thread_link else None
-        post_details['seller_id'] = header.find("div").find("div").find("div").text.replace('"', "").replace("by", "").strip()
-        posted_at_str = header.find("time")['datetime'] if header.find("time") and header.find("time").has_attr("datetime") else None
-        if posted_at_str:
-            try:
-                post_details['posted_at'] = datetime.fromisoformat(posted_at_str.replace('Z', '+00:00'))
-            except Exception:
-                post_details['posted_at'] = posted_at_str
-        else:
-            post_details['posted_at'] = None
+    try:
+        soup = BeautifulSoup(html_source, 'html.parser')
+        all_posts = soup.find("div", {"data-testid": "searchListing-container"}).find_all("div", {"data-testid": "search-post-layout"})
+        post_to_upload = []
+        for post in all_posts:
+            post_details = {}
+            header = post.find("div", {"data-testid": "header"})
+            thread_link = header.find("a")
+            post_details['thread_id'] = (thread_link['href']).split('/')[-1] if thread_link and thread_link.has_attr('href') else None
+            post_details['thread_title'] = thread_link.text.strip() if thread_link else None
+            post_details['seller_id'] = header.find("div").find("div").find("div").text.replace('"', "").replace("by", "").strip()
+            posted_at_str = header.find("time")['datetime'] if header.find("time") and header.find("time").has_attr("datetime") else None
+            if posted_at_str:
+                try:
+                    post_details['posted_at'] = datetime.fromisoformat(posted_at_str.replace('Z', '+00:00'))
+                except Exception:
+                    post_details['posted_at'] = posted_at_str
+            else:
+                post_details['posted_at'] = None
 
-        post_body = post.find("div", {"data-testid": "content-expander"}).find("div").find_all("p")
-        post_details['post_body'] = " ".join([p.text for p in post_body])
-        last_time = post.find("div", {"data-testid":"last-activity-metric"}).find("time")
-        last_time_str = last_time["datetime"] if last_time and last_time.has_attr("datetime") else None
-        if last_time_str:
-            try:
-                post_details['last_activity_at'] = datetime.fromisoformat(last_time_str.replace('Z', '+00:00'))
-            except Exception:
-                post_details['last_activity_at'] = last_time_str
-        else:
-            post_details['last_activity_at'] = None
-        
-        post_details['up_votes'] = parse_count(post.find('div', {'data-testid': 'upvote-metric'}).get_text(strip=True).split()[0])
-        post_details['down_votes'] = parse_count(post.find('div', {'data-testid': 'downvote-metric'}).get_text(strip=True).split()[0])
-        post_details['view_count'] = parse_count(post.find('div', {'data-testid': 'view-metric'}).get_text(strip=True).split()[0])
-        post_details['reply_count'] = parse_count(post.find('div', {'data-testid': 'reply-metric'}).get_text(strip=True).split()[0])
-        post_to_upload.append(post_details)
-    return post_to_upload
+            post_body = post.find("div", {"data-testid": "content-expander"}).find("div").find_all("p")
+            post_details['post_body'] = " ".join([p.text for p in post_body])
+            last_time = post.find("div", {"data-testid":"last-activity-metric"}).find("time")
+            last_time_str = last_time["datetime"] if last_time and last_time.has_attr("datetime") else None
+            if last_time_str:
+                try:
+                    post_details['last_activity_at'] = datetime.fromisoformat(last_time_str.replace('Z', '+00:00'))
+                except Exception:
+                    post_details['last_activity_at'] = last_time_str
+            else:
+                post_details['last_activity_at'] = None
+            
+            post_details['up_votes'] = parse_count(post.find('div', {'data-testid': 'upvote-metric'}).get_text(strip=True).split()[0])
+            post_details['down_votes'] = parse_count(post.find('div', {'data-testid': 'downvote-metric'}).get_text(strip=True).split()[0])
+            post_details['view_count'] = parse_count(post.find('div', {'data-testid': 'view-metric'}).get_text(strip=True).split()[0])
+            post_details['reply_count'] = parse_count(post.find('div', {'data-testid': 'reply-metric'}).get_text(strip=True).split()[0])
+            post_to_upload.append(post_details)
+        return post_to_upload
+    except Exception as e:
+        print(f"Error scraping data: {e}")
+        return None
 
 def upload_scraped_data(conn, table, data):
+    if conn and not conn.is_connected():
+        try:
+            conn.reconnect(attempts=3, delay=2)
+            if not conn.is_connected():
+                conn = connect_to_sql()
+        except Exception as e:
+            print(f"Error connecting to database. Saved data to file...: {e}")
+            with open('scraped_data.json', 'a') as f:
+                json.dump(data, f, indent=4)
+            return
     cursor = conn.cursor()
     if not data:
         return
@@ -176,14 +220,8 @@ def upload_scraped_data(conn, table, data):
 
 def main(url, category, sorted_by, driver, conn):
     print(url)
-    print("Loading page and scrolling till the bottom... This might take a while... It loads almost 1K-1.5K records.")
-    page_source = load_page_with_selenium(url, driver)
-    print("Done with the page load.")
-    scraped_data = scrape_data(page_source)
-    for i in scraped_data:
-        i['category'] = category
-        i['sorted_by'] = sorted_by
-    upload_scraped_data(conn, 'stg_amz_seller_forums_post', scraped_data)
+    print("Loading page and scrolling till the bottom... This might take a while...")
+    load_page_with_selenium(url, driver)
     print("Done scraping! :)")
 
 # Example usage
@@ -194,8 +232,9 @@ if __name__ == "__main__":
     conn = connect_to_sql()
     for sorted_by, categories in urls.items(): 
         for category, url in categories.items():
+            print(f"Processing category: {category} with sorting: {sorted_by}")
             main(url, category, sorted_by, driver, conn)
-            break
-        break
-    driver.quit()
-    conn.close()
+    if driver:
+        driver.quit()
+    if conn:
+        conn.close()
