@@ -65,7 +65,7 @@ def fetch_all_unprocessed_threads(conn, base_url):
         SELECT DISTINCT p.thread_id 
         FROM stg_amz_seller_forums_post p
         LEFT JOIN stg_amz_seller_forums_comments c ON p.thread_id = c.thread_id
-        WHERE c.thread_id IS NULL AND p.thread_id IS NOT NULL
+        WHERE c.thread_id IS NULL AND p.thread_id IS NOT NULL AND p.reply_count != 0
         LIMIT %s
     """
     try:
