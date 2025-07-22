@@ -11,7 +11,7 @@ import mysql.connector
 SORT_BY = ["lastActivityTime", "createdAt", "totalViews", "totalVotes"]
 
 # Choose one from ["allTime", "pastDay", "pastWeek", "pastMonth", "threeMonths", "pastYear"]
-DATE_RANGE = "pastMonth"
+DATE_RANGE = "pastYear"
 
 # CHOOSE from ['Account Health', 'Account Setup', 'Community Connections', 'Create and Manage Listings', 'Fulfill Orders', 'Grow Your Business', 'Manage Buyer Experience', 'Manage Inventory', 'Manage Your Brand', 'News and Announcements', 'Product Safety and Compliance']
 CATEGORIES = ['Account Health', 'Account Setup', 'Community Connections', 'Create and Manage Listings', 'Fulfill Orders', 'Grow Your Business', 'Manage Buyer Experience', 'Manage Inventory', 'Manage Your Brand', 'News and Announcements', 'Product Safety and Compliance']
@@ -29,7 +29,7 @@ with open(config_path, 'r') as f:
 
 def setup_headless_driver():
     options = webdriver.ChromeOptions()
-    # options.add_argument('--headless=new')
+    options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
