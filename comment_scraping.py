@@ -18,7 +18,7 @@ with open(config_path, 'r') as f:
 
 def setup_headless_driver():
     options = webdriver.ChromeOptions()
-    options.add_argument('--headless=new')
+    # options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
@@ -140,8 +140,8 @@ def scrape_data(html_source, thread_id):
                     comm_data['commented_at'] = posted_at_str
             else:
                 comm_data['commented_at'] = None
-            comment_body = comm.find("div", {"data-testid": "post-content"}).find_all("p")
-            comm_data['comment_body'] = " ".join([p.text for p in comment_body])
+            comment_body = comm.find("div", {"data-testid": "post-content"}).find_all("p") if comm.find("div", {"data-testid": "post-content"}) else []
+            comm_data['comment_body'] = " ".join([p.text for p in comment_body]) if comment_body else "[This comment has been deleted.]"
             vote_container_spans = comm.find("div", {"data-testid": "vote-container"}).find_all('span')
             if len(vote_container_spans) < 2:
                 comm_data['up_votes'], comm_data["down_votes"] = 0, 0
